@@ -2,7 +2,7 @@ import { EditorView } from '@codemirror/view';
 import { Extension } from '@codemirror/state';
 import { oneDark } from '@codemirror/theme-one-dark';
 
-export const ocbEditorTheme: Extension = EditorView.theme(
+export const mtcbEditorTheme: Extension = EditorView.theme(
   {
     '&': {
       backgroundColor: '#0b0d13 !important',
@@ -56,5 +56,5 @@ export const ocbEditorTheme: Extension = EditorView.theme(
 
 export const getEditorExtensions = (language: 'python' | 'javascript', pythonExt: Extension, jsExt: Extension): Extension[] => {
   const langExtension = language === 'python' ? pythonExt : jsExt;
-  return [oneDark, ocbEditorTheme, langExtension];
+  return [oneDark, mtcbEditorTheme, langExtension];
 };

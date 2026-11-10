@@ -54,7 +54,7 @@ export const OutputPanel: React.FC<OutputPanelProps> = ({
   const handleDownload = () => {
     if (!translatedCode) return;
     const extension = targetLang === 'python' ? '.py' : '.js';
-    const filename = `ocb_translation${extension}`;
+    const filename = `mtcb_translation${extension}`;
     const blob = new Blob([translatedCode], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');

@@ -13,7 +13,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
-logger = logging.getLogger("ocb.main")
+logger = logging.getLogger("mtcb.main")
 
 from contextlib import asynccontextmanager
 
@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.VERSION,
-    description="Privacy-preserving, local AI-powered code translator between Python and JavaScript.",
+    description="MTCB (MEHTYS CODE BRIDGE) — Privacy-preserving code translator between Python and JavaScript.",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan

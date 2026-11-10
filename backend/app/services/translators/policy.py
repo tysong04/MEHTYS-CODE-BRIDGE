@@ -1,5 +1,5 @@
 """
-Strict Faithful Code Translation Policy for OCB (Octon Code Bridge).
+Strict Faithful Code Translation Policy for MTCB (MEHTYS CODE BRIDGE).
 
 Version: 1.0.0
 Authoritative Policy: Prioritize faithful translation over code improvement across
@@ -13,7 +13,7 @@ TRANSLATION_POLICY_VERSION = "1.0.0"
 
 STRICT_TRANSLATION_POLICY_TEXT = """
 ABSOLUTE TRANSLATION POLICY:
-1. OCB is a TRANSLATOR, NOT a code fixer, optimizer, refactorer, formatter, or code reviewer.
+1. MTCB is a TRANSLATOR, NOT a code fixer, optimizer, refactorer, formatter, or code reviewer.
 2. The user's submitted source code is the authoritative source of truth. Translate it into the target language while preserving its original meaning, behavior, intent, structure, and mistakes as closely as the target language permits.
 3. NEVER silently improve, correct, clean up, modernize, simplify, or reinterpret user code.
 

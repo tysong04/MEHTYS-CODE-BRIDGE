@@ -1,8 +1,8 @@
-# OCB — Octon Code Bridge
+# MTCB — MEHTYS CODE BRIDGE
 
 > **Privacy-first, developer-focused code translator between Python and JavaScript.**
 
-OCB is a developer-focused code translation tool designed to translate snippets and single source files cleanly between **Python and JavaScript** in both directions. It supports **Local AI inference via Ollama**, **Cloud AI inference via Google Gemini**, and a deterministic **Mock Translation Engine** for offline test environments.
+MTCB is a developer-focused code translation tool designed to translate snippets and single source files cleanly between **Python and JavaScript** in both directions. It supports **Local AI inference via Ollama**, **Cloud AI inference via Google Gemini**, and a deterministic **Mock Translation Engine** for offline test environments.
 
 ---
 
@@ -36,7 +36,7 @@ OCB is a developer-focused code translation tool designed to translate snippets 
 ## Project Structure
 
 ```text
-OCB/
+MTCB/
 ├── frontend/
 │   ├── src/
 │   │   ├── components/
@@ -158,7 +158,7 @@ The frontend will open at `http://localhost:5173`.
 
 ### 3. Choosing Your AI Provider
 
-OCB gives you total freedom in how translation is executed:
+MTCB gives you total freedom in how translation is executed:
 
 1. **Google Gemini (Cloud AI)**:
    - Click the provider status badge in the header or the **Provider** button in the toolbar.
@@ -173,7 +173,7 @@ OCB gives you total freedom in how translation is executed:
 2. **Local Ollama (Offline & Private)**:
    - Install Ollama from [ollama.com](https://ollama.com).
    - Pull the recommended model: `ollama pull qwen2.5-coder:7b`.
-   - In OCB, select **Local Ollama** in Provider Settings.
+   - In MTCB, select **Local Ollama** in Provider Settings.
    - The app communicates directly with `http://localhost:11434`.
 
 3. **Mock Engine (Offline Testing)**:

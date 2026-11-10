@@ -411,7 +411,7 @@ export const App: React.FC = () => {
           </span>
         </div>
         <div className="footer-right">
-          <span>OCB &bull; Developer Code Translation</span>
+          <span>MTCB &bull; Developer Code Translation</span>
         </div>
       </footer>
 

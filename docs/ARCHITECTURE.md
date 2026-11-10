@@ -1,8 +1,8 @@
-# OCB (Octon Code Bridge) — Architecture & Design Specification
+# MTCB (MEHTYS CODE BRIDGE) — Architecture & Design Specification
 
 ## Overview
 
-**OCB (Octon Code Bridge)** is an open, developer-centric, privacy-first code translation tool designed to perform accurate translations between Python and JavaScript (in both directions). It is built for snippets and single source files, prioritizing local AI execution (via Ollama) so user code is never exposed to third-party cloud APIs.
+**MTCB (MEHTYS CODE BRIDGE)** is an open, developer-centric, privacy-first code translation tool designed to perform accurate translations between Python and JavaScript (in both directions). It is built for snippets and single source files, prioritizing local AI execution (via Ollama) so user code is never exposed to third-party cloud APIs.
 
 ---
 
@@ -87,8 +87,8 @@ class BaseTranslationProvider(ABC):
 
 ## Strict Faithful Translation Policy (Version 1.0.0)
 
-OCB prioritizes **faithful translation over code improvement** across all providers and language pairs:
-1. **Absolute Translation Policy**: OCB is a translator, NOT a code fixer, optimizer, refactorer, formatter, or linter. The user's submitted source code is the authoritative source of truth.
+MTCB prioritizes **faithful translation over code improvement** across all providers and language pairs:
+1. **Absolute Translation Policy**: MTCB is a translator, NOT a code fixer, optimizer, refactorer, formatter, or linter. The user's submitted source code is the authoritative source of truth.
 2. **Preserve All User-Authored Content**: Exact preservation of comments (typos, punctuation, placement), string literals, identifiers, naming styles, and statement ordering.
 3. **Preserve Existing Bugs & Quirks**: Bugs, incorrect conditions (`< 10` instead of `<= 10`), duplicated collection values, and off-by-one errors must remain equivalently incorrect in the target language.
 4. **Make Only Necessary Language Adaptations**: Adapt only syntax and idioms required by the target language (`def` ↔ `function`, `print` ↔ `console.log`, `None` ↔ `null`).

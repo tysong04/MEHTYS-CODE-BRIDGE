@@ -15,7 +15,7 @@ from app.services.translators.base import (
     TranslationExecutionError,
 )
 
-logger = logging.getLogger("ocb.api.routes")
+logger = logging.getLogger("mtcb.api.routes")
 router = APIRouter(prefix="/api")
 
 

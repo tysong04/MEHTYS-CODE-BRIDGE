@@ -1,4 +1,4 @@
-"""OCB Schemas package."""
+"""MTCB Schemas package."""
 from .translation import (
     Language,
     ProviderConfig,

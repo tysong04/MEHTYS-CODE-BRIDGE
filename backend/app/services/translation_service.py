@@ -19,7 +19,7 @@ from app.services.translators.mock import MockTranslationProvider
 from app.services.translators.ollama import OllamaTranslationProvider
 from app.services.translators.gemini import GeminiTranslationProvider
 
-logger = logging.getLogger("ocb.services.translation")
+logger = logging.getLogger("mtcb.services.translation")
 
 
 class TranslationService:
@@ -69,7 +69,7 @@ class TranslationService:
             return GeminiTranslationProvider(
                 api_key=config.api_key,
                 model=config.model or "gemini-3.8-flash",
-                timeout=settings.OLLAMA_TIMEOUT_SECONDS
+                timeout=settings.GEMINI_TIMEOUT_SECONDS
             )
 
         elif provider_name == "ollama":
@@ -156,11 +156,13 @@ class TranslationService:
         provider = self.resolve_provider(request.provider_config)
 
         # Safe logging: mask provider info, never print keys or source code
+        model_name = getattr(provider, "model", getattr(provider, "_model_name", "default"))
         logger.info(
-            "Translation requested: %s -> %s (provider=%s, code_size=%d bytes, instructions=%s)",
+            "Translation requested: %s -> %s (provider=%s, model=%s, code_size=%d bytes, instructions=%s)",
             request.source_lang.value,
             request.target_lang.value,
             provider.name,
+            model_name,
             len(request.code.encode("utf-8")),
             "provided" if request.instructions else "none"
         )

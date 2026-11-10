@@ -1,5 +1,5 @@
 """
-Strict Faithful Code Translation Benchmark Suite for OCB.
+Strict Faithful Code Translation Benchmark Suite for MTCB.
 
 Evaluates three orthogonal dimensions across 20 representative benchmark programs:
 1. Content Fidelity: Preservation of comments, identifiers, string literals, and typos.
@@ -516,7 +516,7 @@ async def test_faithful_benchmark_suite():
     validity_scores: List[float] = []
 
     print(f"\n{'='*75}")
-    print(f"OCB STRICT FAITHFUL TRANSLATION BENCHMARK (Policy v{TRANSLATION_POLICY_VERSION})")
+    print(f"MTCB STRICT FAITHFUL TRANSLATION BENCHMARK (Policy v{TRANSLATION_POLICY_VERSION})")
     print(f"{'='*75}")
     print(f"Total benchmark items: {len(BENCHMARK_SUITE)}")
     print(f"Covering: 10 required domains in both Python -> JS and JS -> Python\n")

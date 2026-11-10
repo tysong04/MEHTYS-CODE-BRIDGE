@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -19,11 +20,61 @@ from app.services.translators.base import (
 )
 from app.services.translators.policy import build_translation_prompt
 
-logger = logging.getLogger("ocb.translators.gemini")
+logger = logging.getLogger("mtcb.translators.gemini")
 
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 FALLBACK_SUGGESTIONS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro", "gemini-flash-latest"]
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+
+# Strict schema to accelerate JSON generation and avoid parsing latency
+TRANSLATION_RESPONSE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "translated_code": {
+            "type": "STRING",
+            "description": "The faithfully translated code adhering strictly to policy."
+        },
+        "explanation": {
+            "type": "STRING",
+            "description": "Concise summary of necessary syntax adaptations."
+        },
+        "warnings": {
+            "type": "ARRAY",
+            "items": {"type": "STRING"},
+            "description": "List of behavioral differences, potential source bugs, or platform caveats."
+        }
+    },
+    "required": ["translated_code"]
+}
+
+
+def _build_generation_config(model: str, include_schema: bool = True, low_latency: bool = True) -> Dict[str, Any]:
+    """
+    Constructs an optimized generationConfig.
+    For Gemini 3/4: Sets thinkingLevel to 'low' to avoid unconstrained multi-minute reasoning.
+    For Gemini 2.5: Sets thinkingBudget to 0 to disable thinking for maximum speed.
+    """
+    config: Dict[str, Any] = {
+        "temperature": 0.2,
+        "responseMimeType": "application/json"
+    }
+    if include_schema:
+        config["responseSchema"] = TRANSLATION_RESPONSE_SCHEMA
+
+    if low_latency:
+        clean = model.lower().replace("models/", "").strip()
+        if "gemini-3" in clean or "gemini-4" in clean:
+            # Low reasoning level drastically cuts Time-To-First-Token (TTFT)
+            config["thinkingConfig"] = {
+                "thinkingLevel": "low"
+            }
+        elif "gemini-2.5" in clean:
+            # 0 disables thinking on Gemini 2.5 flash
+            config["thinkingConfig"] = {
+                "thinkingBudget": 0
+            }
+
+    return config
 
 
 class GeminiTranslationProvider(BaseTranslationProvider):
@@ -67,7 +118,7 @@ class GeminiTranslationProvider(BaseTranslationProvider):
         url = f"{GEMINI_API_BASE}/models"
         headers = {
             "x-goog-api-key": self.api_key,
-            "User-Agent": "OCB-OctonCodeBridge/0.1.0"
+            "User-Agent": "MTCB-MehtysCodeBridge/0.1.0"
         }
 
         try:
@@ -204,65 +255,114 @@ class GeminiTranslationProvider(BaseTranslationProvider):
         code: str,
         instructions: Optional[str] = None
     ) -> TranslationResult:
-        url = f"{GEMINI_API_BASE}/models/{self.model}:generateContent"
+        clean_model = self.model.replace("models/", "").strip()
+        url = f"{GEMINI_API_BASE}/models/{clean_model}:generateContent"
         headers = {
             "x-goog-api-key": self.api_key,
             "Content-Type": "application/json",
-            "User-Agent": "OCB-OctonCodeBridge/0.1.0"
+            "User-Agent": "MTCB-MehtysCodeBridge/0.1.0"
         }
 
         prompt = self._build_prompt(source_lang, target_lang, code, instructions)
 
-        payload = {
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [{"text": prompt}]
-                }
-            ],
-            "generationConfig": {
-                "temperature": 0.2,
-                "responseMimeType": "application/json"
-            }
-        }
+        # Granular timeout: 15s connect/pool, full timeout for read
+        timeout_config = httpx.Timeout(
+            timeout=self.timeout,
+            connect=15.0,
+            read=self.timeout,
+            write=15.0,
+            pool=15.0
+        )
 
+        # First attempt with low-latency thinking config and response schema;
+        # if rejected with 400 (e.g. unsupported thinking/schema field on some models), fallback to basic config.
+        gen_configs = [
+            _build_generation_config(clean_model, include_schema=True, low_latency=True),
+            _build_generation_config(clean_model, include_schema=False, low_latency=False),
+        ]
+
+        part_text = ""
         start_time = time.perf_counter()
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                res = await client.post(url, headers=headers, json=payload)
 
-                if res.status_code != 200:
-                    self._handle_http_error(res)
+        async with httpx.AsyncClient(timeout=timeout_config) as client:
+            for cfg_idx, gen_config in enumerate(gen_configs):
+                payload = {
+                    "contents": [
+                        {
+                            "role": "user",
+                            "parts": [{"text": prompt}]
+                        }
+                    ],
+                    "generationConfig": gen_config
+                }
 
-                data = res.json()
-                candidates = data.get("candidates", [])
-                if not candidates:
-                    block_reason = data.get("promptFeedback", {}).get("blockReason", "Unknown")
+                try:
+                    res = await client.post(url, headers=headers, json=payload)
+
+                    # Check for 400 with invalid schema/thinking arguments vs invalid API key
+                    if res.status_code == 400:
+                        err_body = res.text.lower()
+                        if "api_key" in err_body or "key not valid" in err_body:
+                            self._handle_http_error(res)
+                        elif cfg_idx == 0 and any(k in err_body for k in ("thinking", "schema", "generation_config", "unknown field", "invalid_argument")):
+                            logger.warning(
+                                "Gemini model '%s' rejected advanced generationConfig. Retrying with basic configuration.",
+                                clean_model
+                            )
+                            continue
+                        else:
+                            self._handle_http_error(res)
+
+                    # Transient server error retry (HTTP 503)
+                    if res.status_code == 503:
+                        logger.warning("Gemini returned HTTP 503. Retrying once after 1s...")
+                        await asyncio.sleep(1.0)
+                        res = await client.post(url, headers=headers, json=payload)
+
+                    if res.status_code != 200:
+                        self._handle_http_error(res)
+
+                    data = res.json()
+                    candidates = data.get("candidates", [])
+                    if not candidates:
+                        block_reason = data.get("promptFeedback", {}).get("blockReason", "Unknown")
+                        raise TranslationExecutionError(
+                            f"Gemini did not return any translation candidates (Block reason: {block_reason})."
+                        )
+
+                    # Filter out internal reasoning parts (thought: True) to retrieve the actual output
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    output_parts = [p.get("text", "") for p in parts if not p.get("thought", False) and p.get("text")]
+                    part_text = "\n".join(output_parts).strip()
+                    if not part_text and parts:
+                        part_text = parts[-1].get("text", "").strip()
+
+                    if not part_text:
+                        raise TranslationExecutionError("Gemini returned an empty response.")
+
+                    break  # Success!
+
+                except httpx.ConnectError as e:
+                    raise ProviderUnavailableError(
+                        "Unable to connect to Google Gemini API. Please check your internet connection.",
+                        "Ensure your machine has internet access to reach https://generativelanguage.googleapis.com"
+                    ) from e
+                except httpx.ReadTimeout as e:
                     raise TranslationExecutionError(
-                        f"Gemini did not return any translation candidates (Block reason: {block_reason})."
-                    )
+                        f"Translation timed out after {self.timeout}s while waiting for Google Gemini response."
+                    ) from e
+                except (ProviderUnavailableError, TranslationExecutionError):
+                    raise
+                except Exception as e:
+                    raise TranslationExecutionError(
+                        f"Unexpected error communicating with Google Gemini: {type(e).__name__}"
+                    ) from e
 
-                part_text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
-                if not part_text:
-                    raise TranslationExecutionError("Gemini returned an empty response.")
-
-        except httpx.ConnectError as e:
-            raise ProviderUnavailableError(
-                "Unable to connect to Google Gemini API. Please check your internet connection.",
-                "Ensure your machine has internet access to reach https://generativelanguage.googleapis.com"
-            ) from e
-        except httpx.ReadTimeout as e:
-            raise TranslationExecutionError(
-                f"Translation timed out after {self.timeout}s while waiting for Google Gemini response."
-            ) from e
-        except (ProviderUnavailableError, TranslationExecutionError):
-            raise
-        except Exception as e:
-            raise TranslationExecutionError(
-                f"Unexpected error communicating with Google Gemini: {type(e).__name__}"
-            ) from e
+        if not part_text:
+            raise TranslationExecutionError("Gemini translation returned no content.")
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+        logger.info("Gemini translation completed for model '%s' in %.2fms", clean_model, elapsed_ms)
 
         translated_code, explanation, warnings = self._parse_response(part_text, source_lang, target_lang)
         warnings.append("AI translations may contain subtle behavioral differences. Review before running.")
@@ -277,7 +377,23 @@ class GeminiTranslationProvider(BaseTranslationProvider):
         )
 
     def _handle_http_error(self, res: httpx.Response) -> None:
-        if res.status_code in (400, 401):
+        err_msg = ""
+        try:
+            err_json = res.json()
+            err_msg = err_json.get("error", {}).get("message", "")
+        except Exception:
+            err_msg = res.text[:200] if res.text else ""
+
+        if res.status_code == 400:
+            if "api_key" in err_msg.lower() or "key not valid" in err_msg.lower():
+                raise ProviderUnavailableError(
+                    "Google Gemini rejected the request: Invalid API key.",
+                    "Verify your API key from Google AI Studio (https://aistudio.google.com)."
+                )
+            raise TranslationExecutionError(
+                f"Google Gemini request failed (Bad Request): {err_msg or 'Invalid request parameters.'}"
+            )
+        elif res.status_code == 401:
             raise ProviderUnavailableError(
                 "Google Gemini rejected the request: Invalid API key.",
                 "Verify your API key from Google AI Studio (https://aistudio.google.com)."
@@ -287,7 +403,8 @@ class GeminiTranslationProvider(BaseTranslationProvider):
                 "Google Gemini request forbidden or quota suspended for this API key."
             )
         elif res.status_code == 404:
-            alt_candidates = [m for m in FALLBACK_SUGGESTIONS if m != self.model]
+            clean_model = self.model.replace("models/", "").strip()
+            alt_candidates = [m for m in FALLBACK_SUGGESTIONS if m != clean_model]
             suggestions = f" (such as {', '.join(alt_candidates[:2])})" if alt_candidates else ""
             raise TranslationExecutionError(
                 f"Configured Gemini model '{self.model}' was not found or is unavailable for your API key. "

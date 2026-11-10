@@ -15,7 +15,7 @@ from app.services.translators.base import (
 )
 from app.services.translators.policy import build_translation_prompt
 
-logger = logging.getLogger("ocb.translators.ollama")
+logger = logging.getLogger("mtcb.translators.ollama")
 
 
 def normalize_ollama_tag(tag: str) -> tuple[str, str]:

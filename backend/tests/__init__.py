@@ -1,1 +1,1 @@
-"""Backend test suite for OCB."""
+"""Backend test suite for MTCB."""

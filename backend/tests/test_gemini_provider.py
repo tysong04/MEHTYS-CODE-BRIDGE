@@ -313,7 +313,7 @@ async def test_provider_test_endpoint_gemini_invalid_key_400(client: TestClient)
 def test_gemini_build_prompt_enforces_strict_faithful_policy():
     """
     Verify that the Gemini translation provider constructs prompts
-    enforcing OCB Translation Policy v1.0.0 and preserves user code verbatim.
+    enforcing MTCB Translation Policy v1.0.0 and preserves user code verbatim.
     """
     provider = GeminiTranslationProvider(api_key="AIzaFakeKey123")
     sample_code = (
@@ -332,7 +332,7 @@ def test_gemini_build_prompt_enforces_strict_faithful_policy():
 
     # Must contain authoritative policy declarations
     assert "STRICT TRANSLATION POLICY (VERSION 1.0.0)" in prompt
-    assert "OCB is a TRANSLATOR, NOT a code fixer, optimizer, refactorer" in prompt
+    assert "MTCB is a TRANSLATOR, NOT a code fixer, optimizer, refactorer" in prompt
     assert "PRESERVE ALL USER-AUTHORED CONTENT" in prompt
     assert "SEPARATE TRANSLATION FROM DIAGNOSTICS" in prompt
     assert "Do NOT fix bugs, do NOT correct typos in strings or comments" in prompt

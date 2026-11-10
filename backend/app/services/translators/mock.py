@@ -356,7 +356,7 @@ def _javascript_to_python_faithful(code: str) -> str:
 class MockTranslationProvider(BaseTranslationProvider):
     """
     Deterministic Mock Translation Provider adhering strictly to
-    OCB Translation Policy v1.0.0 (Faithful translation over code improvement).
+    MTCB Translation Policy v1.0.0 (Faithful translation over code improvement).
     """
     def __init__(self, is_available: bool = True, model_name: str = "mock-faithful-v1"):
         self._is_available = is_available
@@ -402,7 +402,7 @@ class MockTranslationProvider(BaseTranslationProvider):
         start_time = time.perf_counter()
 
         warnings: List[str] = [
-            f"Translated under OCB Faithful Translation Policy v{TRANSLATION_POLICY_VERSION}.",
+            f"Translated under MTCB Faithful Translation Policy v{TRANSLATION_POLICY_VERSION}.",
             "All comments, identifiers, string literals, and source code mistakes were preserved verbatim."
         ]
         explanation_items = [

@@ -28,9 +28,9 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
         <div className="brand-text">
           <div className="brand-heading">
-            <span className="brand-acronym">OCB</span>
+            <span className="brand-acronym">MTCB</span>
             <span className="brand-divider">/</span>
-            <span className="brand-name">Octon Code Bridge</span>
+            <span className="brand-name">MEHTYS CODE BRIDGE</span>
           </div>
           <span className="brand-subtitle">
             Local &amp; Cloud Python ⇄ JavaScript bidirectional translation
