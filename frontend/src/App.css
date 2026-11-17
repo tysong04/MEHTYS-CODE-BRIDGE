@@ -34,12 +34,46 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  background: var(--bg-surface-elevated);
+  width: 36px;
+  height: 36px;
+  background: #000000;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
-  color: var(--accent-cyan);
+  overflow: hidden;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: border-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.brand-symbol:hover {
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.brand-logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  user-select: none;
+}
+
+@media (max-width: 640px) {
+  .brand-lockup {
+    gap: 0.6rem;
+  }
+  .brand-symbol {
+    width: 32px;
+    height: 32px;
+  }
+  .brand-acronym {
+    font-size: 1.05rem;
+  }
+  .brand-name {
+    font-size: 0.72rem;
+  }
+  .brand-subtitle {
+    font-size: 0.68rem;
+  }
 }
 
 .brand-text {

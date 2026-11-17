@@ -1,7 +1,7 @@
 import React from 'react';
-import { Binary } from 'lucide-react';
 import { StatusBadge } from './StatusBadge';
 import { HealthResponse, ProviderStatusResponse, ProviderConfig } from '../types/translation';
+import logoImg from '../assets/mehtys-logo.jpeg';
 
 interface HeaderProps {
   backendHealth: HealthResponse | null;
@@ -23,8 +23,8 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="workspace-header">
       <div className="brand-lockup">
-        <div className="brand-symbol" aria-hidden="true">
-          <Binary size={18} />
+        <div className="brand-symbol" title="MEHTYS CODE BRIDGE">
+          <img src={logoImg} alt="MEHTYS Logo" className="brand-logo-img" />
         </div>
         <div className="brand-text">
           <div className="brand-heading">
