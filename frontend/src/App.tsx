@@ -5,9 +5,13 @@ import { LanguageSelector } from './components/LanguageSelector';
 import { InstructionsInput } from './components/InstructionsInput';
 import { CodeEditor } from './components/CodeEditor';
 import { OutputPanel } from './components/OutputPanel';
+import { AnalysisPanel } from './components/AnalysisPanel';
+import { ExecutionConsole } from './components/ExecutionConsole';
 import { ExplanationCard } from './components/ExplanationCard';
 import { ErrorBanner } from './components/ErrorBanner';
 import { ProviderSettingsModal } from './components/ProviderSettingsModal';
+import { AuthModal } from './components/AuthModal';
+import { AuthProvider } from './context/AuthContext';
 import {
   Language,
   HealthResponse,
@@ -15,11 +19,13 @@ import {
   ProviderInfo,
   ApiError,
   ProviderConfig,
+  AnalysisData,
 } from './types/translation';
 import { checkHealth, getProviderStatus, translateCode, TranslationApiError } from './services/api';
+import { computeClientAnalysis } from './services/analyzer';
 import './App.css';
 
-export const App: React.FC = () => {
+const MainWorkspace: React.FC = () => {
   const [sourceLang, setSourceLang] = useState<Language>('python');
   const [targetLang, setTargetLang] = useState<Language>('javascript');
   const [code, setCode] = useState<string>('');
@@ -30,6 +36,7 @@ export const App: React.FC = () => {
   const [explanation, setExplanation] = useState<string>('');
   const [warnings, setWarnings] = useState<string[]>([]);
   const [providerInfo, setProviderInfo] = useState<ProviderInfo | undefined>(undefined);
+  const [analysis, setAnalysis] = useState<AnalysisData | undefined>(undefined);
   const [isStale, setIsStale] = useState<boolean>(false);
 
   const [isTranslating, setIsTranslating] = useState<boolean>(false);
@@ -47,6 +54,7 @@ export const App: React.FC = () => {
     consent_granted: false,
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
 
   // Refresh backend and provider status
   const refreshStatus = useCallback(async () => {
@@ -101,6 +109,7 @@ export const App: React.FC = () => {
       setFilename(null);
       setExplanation('');
       setWarnings([]);
+      setAnalysis(undefined);
       setIsStale(false);
     }
   };
@@ -112,6 +121,7 @@ export const App: React.FC = () => {
     setTranslatedCode('');
     setExplanation('');
     setWarnings([]);
+    setAnalysis(undefined);
     setError(null);
     setIsStale(false);
   };
@@ -123,6 +133,7 @@ export const App: React.FC = () => {
     setTranslatedCode('');
     setExplanation('');
     setWarnings([]);
+    setAnalysis(undefined);
     setError(null);
     setIsStale(false);
   };
@@ -171,6 +182,7 @@ export const App: React.FC = () => {
     setTranslatedCode('');
     setExplanation('');
     setWarnings([]);
+    setAnalysis(undefined);
     setIsStale(false);
 
     try {
@@ -186,6 +198,12 @@ export const App: React.FC = () => {
       setExplanation(result.explanation);
       setWarnings(result.warnings || []);
       setProviderInfo(result.provider_info);
+
+      // Compute or apply analysis metrics
+      const analysisData =
+        result.analysis ||
+        computeClientAnalysis(code, result.translated_code, sourceLang, targetLang, result.warnings || []);
+      setAnalysis(analysisData);
       setIsStale(false);
     } catch (err: unknown) {
       if (err instanceof TranslationApiError) {
@@ -227,6 +245,26 @@ export const App: React.FC = () => {
     }
   };
 
+  // Behavioral verification update from live testing console
+  const handleVerificationUpdate = (verified: boolean, label: string) => {
+    if (!analysis) return;
+    setAnalysis((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        metrics: {
+          ...prev.metrics,
+          behavioral_verification: {
+            ...prev.metrics.behavioral_verification,
+            score: verified ? 100 : 0,
+            label,
+            verified,
+          },
+        },
+      };
+    });
+  };
+
   return (
     <div className="workspace-container">
       {/* Top Application Header */}
@@ -237,6 +275,7 @@ export const App: React.FC = () => {
         onRefreshStatus={refreshStatus}
         currentProviderConfig={providerConfig}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenAuth={() => setIsAuthOpen(true)}
       />
 
       {/* Main Workspace Toolbar */}
@@ -321,7 +360,7 @@ export const App: React.FC = () => {
       {/* System Error Banner */}
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
 
-      {/* Ollama Offline System Notice (ONLY shown when Ollama is the actively selected provider) */}
+      {/* Ollama Offline System Notice */}
       {backendHealth && providerConfig.provider === 'ollama' && providerStatus && !providerStatus.available && !error && !dismissedOfflineWarning && (
         <aside className="system-callout-banner banner-warning" role="status">
           <div className="banner-top-row">
@@ -370,8 +409,9 @@ export const App: React.FC = () => {
         </aside>
       )}
 
-      {/* Split-Pane Translation Editors */}
+      {/* Split-Pane Translation Workspace */}
       <main className="workspace-editor-grid">
+        {/* Left Column: Original Source Code Editor */}
         <CodeEditor
           code={code}
           onChange={handleCodeChange}
@@ -388,14 +428,32 @@ export const App: React.FC = () => {
           disabled={isTranslating}
         />
 
-        <OutputPanel
-          translatedCode={translatedCode}
-          targetLang={targetLang}
-          providerInfo={providerInfo}
-          isTranslating={isTranslating}
-          isStale={isStale}
-        />
+        {/* Right Column: Translated Code Editor & Analysis Panel */}
+        <div className="workspace-right-column">
+          <OutputPanel
+            translatedCode={translatedCode}
+            targetLang={targetLang}
+            providerInfo={providerInfo}
+            isTranslating={isTranslating}
+            isStale={isStale}
+          />
+
+          <AnalysisPanel
+            analysis={analysis}
+            isTranslating={isTranslating}
+            hasOutput={!!translatedCode}
+          />
+        </div>
       </main>
+
+      {/* Code Execution & Testing Environment */}
+      <ExecutionConsole
+        originalCode={code}
+        translatedCode={translatedCode}
+        sourceLang={sourceLang}
+        targetLang={targetLang}
+        onVerificationUpdate={handleVerificationUpdate}
+      />
 
       {/* Explanation, Idioms, Assumptions & Warnings */}
       <ExplanationCard explanation={explanation} warnings={warnings} />
@@ -437,6 +495,20 @@ export const App: React.FC = () => {
           }));
         }}
       />
+
+      {/* User Login and Registration Modal */}
+      <AuthModal
+        isOpen={isAuthOpen}
+        onClose={() => setIsAuthOpen(false)}
+      />
     </div>
+  );
+};
+
+export const App: React.FC = () => {
+  return (
+    <AuthProvider>
+      <MainWorkspace />
+    </AuthProvider>
   );
 };

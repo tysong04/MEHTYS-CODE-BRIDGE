@@ -20,6 +20,8 @@ from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from app.services.auth_service import init_db
+    init_db()
     logger.info("Starting %s v%s (Provider: %s)", settings.APP_NAME, settings.VERSION, settings.PROVIDER_TYPE)
     yield
     logger.info("Shutting down %s", settings.APP_NAME)

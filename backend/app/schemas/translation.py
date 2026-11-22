@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -89,6 +89,7 @@ class TranslationResponse(BaseModel):
     explanation: str
     warnings: List[str] = Field(default_factory=list)
     provider_info: ProviderInfo
+    analysis: Optional[Dict[str, Any]] = Field(default=None, description="Static preservation metrics and 'Know How?' analysis")
 
 
 class ProviderStatusResponse(BaseModel):

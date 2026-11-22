@@ -46,6 +46,57 @@ export interface ProviderInfo {
   verified: boolean;
 }
 
+export interface MetricItem {
+  score: number | null;
+  label: string;
+  method: string;
+  reliable: boolean;
+  verified?: boolean;
+  summary: string;
+}
+
+export interface AnalysisBreakdown {
+  source_structure: Record<string, number>;
+  target_structure: Record<string, number>;
+  identifiers_source_count: number;
+  identifiers_retained_count: number;
+  strings_source_count: number;
+  strings_retained_count: number;
+  comments_source_count: number;
+  comments_target_count: number;
+  warning_count: number;
+}
+
+export interface KnowHowData {
+  structural_explanation: string;
+  content_explanation: string;
+  semantic_explanation: string;
+  what_was_not_verified: string[];
+  why_preservation_is_not_guarantee: string;
+}
+
+export interface AnalysisData {
+  metrics: {
+    structural_preservation: MetricItem;
+    content_preservation: MetricItem;
+    semantic_fidelity: MetricItem;
+    behavioral_verification: MetricItem;
+  };
+  breakdown: AnalysisBreakdown;
+  know_how: KnowHowData;
+}
+
+export interface ExecutionResult {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  exit_code?: number;
+  execution_time_ms: number;
+  timed_out: boolean;
+  status: 'Completed' | 'RuntimeError' | 'Timeout' | 'SecurityRejection' | 'InternalError';
+  disclaimer?: string;
+}
+
 export interface TranslationResponse {
   source_lang: Language;
   target_lang: Language;
@@ -53,6 +104,7 @@ export interface TranslationResponse {
   explanation: string;
   warnings: string[];
   provider_info: ProviderInfo;
+  analysis?: AnalysisData;
 }
 
 export interface ProviderStatusResponse {

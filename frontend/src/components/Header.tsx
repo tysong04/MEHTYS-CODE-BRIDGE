@@ -1,6 +1,8 @@
 import React from 'react';
+import { LogIn } from 'lucide-react';
 import { StatusBadge } from './StatusBadge';
 import { HealthResponse, ProviderStatusResponse, ProviderConfig } from '../types/translation';
+import { useAuth } from '../context/AuthContext';
 import logoImg from '../assets/mehtys-logo.jpeg';
 
 interface HeaderProps {
@@ -10,6 +12,7 @@ interface HeaderProps {
   onRefreshStatus: () => void;
   currentProviderConfig: ProviderConfig;
   onOpenSettings: () => void;
+  onOpenAuth: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,7 +22,10 @@ export const Header: React.FC<HeaderProps> = ({
   onRefreshStatus,
   currentProviderConfig,
   onOpenSettings,
+  onOpenAuth,
 }) => {
+  const { user, isAuthenticated } = useAuth();
+
   return (
     <header className="workspace-header">
       <div className="brand-lockup">
@@ -38,14 +44,38 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      <StatusBadge
-        backendHealth={backendHealth}
-        providerStatus={providerStatus}
-        isLoading={isLoadingStatus}
-        onRefresh={onRefreshStatus}
-        currentProviderConfig={currentProviderConfig}
-        onOpenSettings={onOpenSettings}
-      />
+      <div className="header-right-actions">
+        <StatusBadge
+          backendHealth={backendHealth}
+          providerStatus={providerStatus}
+          isLoading={isLoadingStatus}
+          onRefresh={onRefreshStatus}
+          currentProviderConfig={currentProviderConfig}
+          onOpenSettings={onOpenSettings}
+        />
+
+        <button
+          type="button"
+          className={`btn-header-auth ${isAuthenticated ? 'logged-in' : ''}`}
+          onClick={onOpenAuth}
+          title={isAuthenticated ? `Signed in as ${user?.name}` : 'Sign In or Register'}
+          aria-label={isAuthenticated ? 'Open user profile' : 'Sign In'}
+        >
+          {isAuthenticated && user ? (
+            <>
+              <span className="auth-avatar-pill">
+                {user.name.slice(0, 2).toUpperCase()}
+              </span>
+              <span className="auth-user-name">{user.name.split(' ')[0]}</span>
+            </>
+          ) : (
+            <>
+              <LogIn size={13} />
+              <span>Sign In</span>
+            </>
+          )}
+        </button>
+      </div>
     </header>
   );
 };

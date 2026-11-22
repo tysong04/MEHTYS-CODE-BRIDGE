@@ -41,6 +41,10 @@ frontend/dist-ssr/
 .env
 *.env
 !.env.example
+backend/data/*.db*
+*.db
+*.db-wal
+*.db-shm
 
 # IDEs & Editors
 .vscode/

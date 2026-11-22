@@ -1,5 +1,6 @@
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Header, status
 from app.config import settings
 from app.schemas.translation import (
     TranslationRequest,
@@ -9,6 +10,23 @@ from app.schemas.translation import (
     ProviderTestResponse,
     HealthResponse,
 )
+from app.schemas.auth import (
+    RegisterRequest,
+    LoginRequest,
+    AuthResponse,
+    UserProfile,
+)
+from app.schemas.execution import (
+    ExecuteRequest,
+    ExecuteResponse,
+)
+from app.services.auth_service import (
+    register_user,
+    authenticate_user,
+    get_user_from_token,
+    invalidate_session,
+)
+from app.services.execution_service import execute_python_code
 from app.services.translation_service import TranslationService, get_translation_service
 from app.services.translators.base import (
     ProviderUnavailableError,
@@ -17,6 +35,118 @@ from app.services.translators.base import (
 
 logger = logging.getLogger("mtcb.api.routes")
 router = APIRouter(prefix="/api")
+
+
+def extract_bearer_token(authorization: Optional[str] = Header(None)) -> Optional[str]:
+    """Helper to extract bearer token from Authorization header."""
+    if not authorization:
+        return None
+    parts = authorization.split()
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1].strip()
+    return None
+
+
+@router.post(
+    "/auth/register",
+    response_model=AuthResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Authentication"]
+)
+async def register(request: RegisterRequest) -> AuthResponse:
+    """Register a new user account with secure password hashing."""
+    try:
+        data = register_user(request.name, request.email, request.password)
+        return AuthResponse(
+            user=UserProfile(**data["user"]),
+            token=data["token"]
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": str(e), "error_type": "RegistrationError"}
+        )
+
+
+@router.post(
+    "/auth/login",
+    response_model=AuthResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Authentication"]
+)
+async def login(request: LoginRequest) -> AuthResponse:
+    """Authenticate with email and password to receive a session token."""
+    try:
+        data = authenticate_user(request.email, request.password)
+        return AuthResponse(
+            user=UserProfile(**data["user"]),
+            token=data["token"]
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"message": str(e), "error_type": "AuthenticationError"}
+        )
+
+
+@router.post(
+    "/auth/logout",
+    status_code=status.HTTP_200_OK,
+    tags=["Authentication"]
+)
+async def logout(token: Optional[str] = Depends(extract_bearer_token)):
+    """Invalidate session token."""
+    if token:
+        invalidate_session(token)
+    return {"status": "success", "message": "Logged out successfully."}
+
+
+@router.get(
+    "/auth/me",
+    response_model=UserProfile,
+    status_code=status.HTTP_200_OK,
+    tags=["Authentication"]
+)
+async def get_current_user_profile(token: Optional[str] = Depends(extract_bearer_token)) -> UserProfile:
+    """Retrieve profile for the authenticated session."""
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"message": "Authorization token required.", "error_type": "Unauthorized"}
+        )
+    user = get_user_from_token(token)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"message": "Session expired or invalid. Please log in again.", "error_type": "SessionExpired"}
+        )
+    return UserProfile(**user)
+
+
+@router.post(
+    "/execute",
+    response_model=ExecuteResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Execution"]
+)
+async def execute_code(request: ExecuteRequest) -> ExecuteResponse:
+    """
+    Safely execute a code snippet in an isolated, resource-constrained sandbox.
+    Currently supports Python via isolated subprocess. JavaScript is executed
+    client-side in a Web Worker, but can be routed here as well.
+    """
+    lang = request.language.lower().strip()
+    if lang == "python":
+        res = execute_python_code(request.code, stdin_data=request.stdin or "")
+        return ExecuteResponse(**res)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": f"Server-side execution is only configured for Python. JavaScript runs safely in the browser Web Worker.",
+                "error_type": "UnsupportedExecutionLanguage"
+            }
+        )
 
 
 @router.get("/health", response_model=HealthResponse, tags=["Health"])

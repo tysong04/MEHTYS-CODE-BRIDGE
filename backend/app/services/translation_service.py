@@ -18,6 +18,7 @@ from app.services.translators.base import (
 from app.services.translators.mock import MockTranslationProvider
 from app.services.translators.ollama import OllamaTranslationProvider
 from app.services.translators.gemini import GeminiTranslationProvider
+from app.services.analysis_service import analyze_translation
 
 logger = logging.getLogger("mtcb.services.translation")
 
@@ -174,12 +175,26 @@ class TranslationService:
             instructions=request.instructions
         )
 
+        # Compute static structural and content preservation metrics
+        try:
+            analysis_data = analyze_translation(
+                source_code=request.code,
+                translated_code=result.translated_code,
+                source_lang=request.source_lang.value,
+                target_lang=request.target_lang.value,
+                warnings=result.warnings
+            )
+        except Exception as e:
+            logger.warning("Failed to calculate translation analysis: %s", str(e))
+            analysis_data = None
+
         return TranslationResponse(
             source_lang=request.source_lang,
             target_lang=request.target_lang,
             translated_code=result.translated_code,
             explanation=result.explanation,
             warnings=result.warnings,
+            analysis=analysis_data,
             provider_info=ProviderInfo(
                 provider=result.provider_name or provider.name,
                 model=result.model,
