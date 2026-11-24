@@ -56,6 +56,8 @@ const MainWorkspace: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
 
+  const isTranslatingRef = React.useRef(false);
+
   // Refresh backend and provider status
   const refreshStatus = useCallback(async () => {
     setIsLoadingStatus(true);
@@ -140,6 +142,8 @@ const MainWorkspace: React.FC = () => {
 
   // Perform translation
   const handleTranslate = useCallback(async () => {
+    if (isTranslatingRef.current) return;
+
     if (!code || !code.trim()) {
       setError({
         message: 'Please provide code in the editor or upload a source file before translating.',
@@ -179,6 +183,7 @@ const MainWorkspace: React.FC = () => {
 
     setError(null);
     setIsTranslating(true);
+    isTranslatingRef.current = true;
     setTranslatedCode('');
     setExplanation('');
     setWarnings([]);
@@ -211,6 +216,7 @@ const MainWorkspace: React.FC = () => {
           message: err.message,
           setup_instructions: err.setup_instructions,
           error_type: err.error_type || 'Translation Error',
+          can_switch_provider: err.can_switch_provider,
         });
       } else {
         setError({
@@ -220,6 +226,7 @@ const MainWorkspace: React.FC = () => {
       }
     } finally {
       setIsTranslating(false);
+      isTranslatingRef.current = false;
     }
   }, [code, sourceLang, targetLang, instructions, providerConfig]);
 
@@ -358,7 +365,19 @@ const MainWorkspace: React.FC = () => {
       </section>
 
       {/* System Error Banner */}
-      <ErrorBanner error={error} onDismiss={() => setError(null)} />
+      <ErrorBanner
+        error={error}
+        onDismiss={() => setError(null)}
+        onSwitchToMock={() => {
+          setProviderConfig((prev) => ({
+            ...prev,
+            provider: 'mock',
+            model: 'mock-model-v1',
+          }));
+          setError(null);
+        }}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+      />
 
       {/* Ollama Offline System Notice */}
       {backendHealth && providerConfig.provider === 'ollama' && providerStatus && !providerStatus.available && !error && !dismissedOfflineWarning && (

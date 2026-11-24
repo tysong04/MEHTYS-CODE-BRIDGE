@@ -116,7 +116,7 @@ async def test_gemini_rate_limit_handled(client: TestClient):
     mock_resp.status_code = 429
     mock_resp.text = "Quota exceeded"
 
-    with patch("httpx.AsyncClient.post", return_value=mock_resp):
+    with patch("httpx.AsyncClient.post", return_value=mock_resp), patch("asyncio.sleep", return_value=None):
         payload = {
             "source_lang": "python",
             "target_lang": "javascript",
@@ -129,9 +129,11 @@ async def test_gemini_rate_limit_handled(client: TestClient):
             }
         }
         response = client.post("/api/translate", json=payload)
-        assert response.status_code == 502
+        assert response.status_code == 503
         data = response.json()
-        assert "rate limit or quota" in data["detail"]["message"].lower()
+        assert "gemini is temporarily busy" in data["detail"]["message"].lower()
+        assert data["detail"]["error_type"] == "ProviderBusy"
+        assert data["detail"]["can_switch_provider"] is True
 
 
 @pytest.mark.asyncio
@@ -342,3 +344,159 @@ def test_gemini_build_prompt_enforces_strict_faithful_policy():
     assert sample_code in prompt
 
 
+
+
+@pytest.mark.asyncio
+async def test_gemini_transient_failure_then_success(client: TestClient):
+    """Verify that a temporary high-demand error retries and succeeds on subsequent attempt."""
+    mock_busy = MagicMock(spec=httpx.Response)
+    mock_busy.status_code = 503
+    mock_busy.text = json.dumps({
+        "error": {
+            "code": 503,
+            "message": "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.",
+            "status": "UNAVAILABLE"
+        }
+    })
+    mock_busy.headers = {}
+
+    mock_ok = MagicMock(spec=httpx.Response)
+    mock_ok.status_code = 200
+    mock_ok.text = json.dumps({
+        "candidates": [{
+            "content": {
+                "parts": [{
+                    "text": json.dumps({
+                        "translated_code": "console.log('hello');",
+                        "explanation": "Mapped print to console.log",
+                        "warnings": []
+                    })
+                }]
+            }
+        }]
+    })
+    mock_ok.json.return_value = json.loads(mock_ok.text)
+
+    # First attempt fails with 503, second succeeds
+    with patch("httpx.AsyncClient.post", side_effect=[mock_busy, mock_ok]) as mock_post:
+        payload = {
+            "source_lang": "python",
+            "target_lang": "javascript",
+            "code": "print('hello')",
+            "provider_config": {
+                "provider": "gemini",
+                "api_key": "AIzaSyFakeValidKey123",
+                "consent_granted": True,
+                "model": "gemini-3.8-flash"
+            }
+        }
+        response = client.post("/api/translate", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["translated_code"] == "console.log('hello');"
+        assert mock_post.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_gemini_exhausted_retries_returns_clean_busy_message(client: TestClient):
+    """Verify that when Gemini remains busy across all retries, a clean understandable message is returned."""
+    mock_busy = MagicMock(spec=httpx.Response)
+    mock_busy.status_code = 503
+    mock_busy.text = json.dumps({
+        "error": {
+            "code": 503,
+            "message": "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.",
+            "status": "UNAVAILABLE"
+        }
+    })
+    mock_busy.headers = {}
+
+    with patch("httpx.AsyncClient.post", return_value=mock_busy), patch("asyncio.sleep", return_value=None):
+        payload = {
+            "source_lang": "python",
+            "target_lang": "javascript",
+            "code": "print('hello')",
+            "provider_config": {
+                "provider": "gemini",
+                "api_key": "AIzaSyFakeValidKey123",
+                "consent_granted": True,
+                "model": "gemini-3.8-flash"
+            }
+        }
+        response = client.post("/api/translate", json=payload)
+        assert response.status_code == 503
+        data = response.json()
+        detail = data["detail"]
+        assert detail["message"] == "Gemini is temporarily busy. Your code is safe. Please try again shortly or switch providers."
+        assert detail["error_type"] == "ProviderBusy"
+        assert detail["can_switch_provider"] is True
+        # Never expose raw server trace or keys
+        assert "AIzaSy" not in str(data)
+
+
+@pytest.mark.asyncio
+async def test_gemini_rate_limit_429_returns_clean_busy_message(client: TestClient):
+    """Verify that HTTP 429 rate limit retries and returns clean busy message if exhausted."""
+    mock_429 = MagicMock(spec=httpx.Response)
+    mock_429.status_code = 429
+    mock_429.text = json.dumps({
+        "error": {
+            "code": 429,
+            "message": "Resource has been exhausted (e.g. check quota).",
+            "status": "RESOURCE_EXHAUSTED"
+        }
+    })
+    mock_429.headers = {"retry-after": "1"}
+
+    with patch("httpx.AsyncClient.post", return_value=mock_429), patch("asyncio.sleep", return_value=None):
+        payload = {
+            "source_lang": "python",
+            "target_lang": "javascript",
+            "code": "def add(a, b): return a + b",
+            "provider_config": {
+                "provider": "gemini",
+                "api_key": "AIzaSyFakeValidKey123",
+                "consent_granted": True,
+                "model": "gemini-3.8-flash"
+            }
+        }
+        response = client.post("/api/translate", json=payload)
+        assert response.status_code == 503
+        data = response.json()
+        assert data["detail"]["message"] == "Gemini is temporarily busy. Your code is safe. Please try again shortly or switch providers."
+        assert data["detail"]["error_type"] == "ProviderBusy"
+        assert data["detail"]["can_switch_provider"] is True
+
+
+@pytest.mark.asyncio
+async def test_gemini_invalid_api_key_no_retry(client: TestClient):
+    """Verify that permanent errors like 400 Invalid Key do not retry and return immediately."""
+    mock_invalid = MagicMock(spec=httpx.Response)
+    mock_invalid.status_code = 400
+    mock_invalid.text = json.dumps({
+        "error": {
+            "code": 400,
+            "message": "API_KEY_INVALID: Key not valid.",
+            "status": "INVALID_ARGUMENT"
+        }
+    })
+    mock_invalid.headers = {}
+
+    with patch("httpx.AsyncClient.post", return_value=mock_invalid) as mock_post:
+        payload = {
+            "source_lang": "python",
+            "target_lang": "javascript",
+            "code": "print('hello')",
+            "provider_config": {
+                "provider": "gemini",
+                "api_key": "AIzaSyBadKey",
+                "consent_granted": True,
+                "model": "gemini-3.8-flash"
+            }
+        }
+        response = client.post("/api/translate", json=payload)
+        assert response.status_code == 503
+        data = response.json()
+        assert "invalid api key" in data["detail"]["message"].lower()
+        # Invalid key is permanent -> only 1 call attempted, no retries
+        assert mock_post.call_count == 1

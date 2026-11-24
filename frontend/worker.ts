@@ -62,6 +62,14 @@ function buildFaithfulPrompt(
   );
 }
 
+function sanitizeErrorMessage(msg: string): string {
+  if (!msg) return '';
+  return msg
+    .replace(/AIza[0-9A-Za-z\-_]{35}/g, '[REDACTED_API_KEY]')
+    .replace(/key=[a-zA-Z0-9_\-]+/gi, 'key=[REDACTED]')
+    .trim();
+}
+
 function mockTranslate(src: string, tgt: string, code: string): string {
   if (src === 'python' && tgt === 'javascript') {
     return code
@@ -444,27 +452,146 @@ export default {
           };
 
           const startTime = Date.now();
-          const geminiRes = await fetch(`${geminiUrl}?key=${config.api_key.trim()}`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'User-Agent': 'MTCB-MehtysCodeBridge/0.1.0',
-            },
-            body: JSON.stringify(payload),
-          });
+          const MAX_RETRIES = 2; // Up to 3 attempts total (initial + 2 retries)
+          let geminiRes: Response | null = null;
+          let lastErrMsg = '';
+          let isTransient = false;
 
-          if (!geminiRes.ok) {
-            const errText = await geminiRes.text();
-            let errMsg = 'Gemini translation request failed.';
+          for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             try {
-              const errJson = JSON.parse(errText);
-              errMsg = errJson.error?.message || errMsg;
-            } catch {}
+              geminiRes = await fetch(`${geminiUrl}?key=${config.api_key.trim()}`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'User-Agent': 'MTCB-MehtysCodeBridge/0.1.0',
+                },
+                body: JSON.stringify(payload),
+              });
+
+              if (geminiRes.ok) {
+                break; // Succeeded!
+              }
+
+              const status = geminiRes.status;
+              const errText = await geminiRes.text();
+              let parsedErrMsg = '';
+              try {
+                const errJson = JSON.parse(errText);
+                parsedErrMsg = errJson.error?.message || errText;
+              } catch {
+                parsedErrMsg = errText;
+              }
+              lastErrMsg = sanitizeErrorMessage(parsedErrMsg);
+              const errLower = lastErrMsg.toLowerCase();
+
+              isTransient = (
+                status === 429 ||
+                status === 500 ||
+                status === 502 ||
+                status === 503 ||
+                status === 504 ||
+                errLower.includes('high demand') ||
+                errLower.includes('spikes in demand') ||
+                errLower.includes('temporarily') ||
+                errLower.includes('resource_exhausted') ||
+                errLower.includes('overloaded')
+              );
+
+              // Permanent errors: do not retry
+              if (!isTransient) {
+                break;
+              }
+
+              if (attempt < MAX_RETRIES) {
+                let delayMs = 0;
+                const retryAfterHeader = geminiRes.headers.get('retry-after');
+                if (retryAfterHeader) {
+                  const parsedSec = parseInt(retryAfterHeader, 10);
+                  if (!isNaN(parsedSec) && parsedSec > 0 && parsedSec <= 10) {
+                    delayMs = parsedSec * 1000;
+                  }
+                }
+                if (delayMs <= 0) {
+                  // Exponential backoff + jitter (attempt 0: ~1.2s, attempt 1: ~2.3s)
+                  const baseDelay = 1000;
+                  const jitter = Math.floor(Math.random() * 400);
+                  delayMs = baseDelay * Math.pow(2, attempt) + jitter;
+                }
+                await new Promise((r) => setTimeout(r, delayMs));
+              }
+            } catch (fetchErr: any) {
+              isTransient = true;
+              lastErrMsg = sanitizeErrorMessage(fetchErr?.message || 'Network error communicating with Google Gemini');
+              if (attempt < MAX_RETRIES) {
+                await new Promise((r) => setTimeout(r, 1200 + Math.floor(Math.random() * 400)));
+              }
+            }
+          }
+
+          if (!geminiRes || !geminiRes.ok) {
+            const status = geminiRes ? geminiRes.status : 503;
+
+            // If transient / high demand / quota spike
+            if (isTransient) {
+              return new Response(
+                JSON.stringify({
+                  detail: {
+                    message: 'Gemini is temporarily busy. Your code is safe. Please try again shortly or switch providers.',
+                    error_type: 'ProviderBusy',
+                    can_switch_provider: true,
+                  },
+                }),
+                { status: 503, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
+              );
+            }
+
+            // Permanent errors
+            if (status === 400 || status === 401) {
+              const errLower = lastErrMsg.toLowerCase();
+              if (errLower.includes('api_key') || errLower.includes('key not valid')) {
+                return new Response(
+                  JSON.stringify({
+                    detail: {
+                      message: 'Google Gemini rejected the request: Invalid API key.',
+                      setup_instructions: 'Verify your API key from Google AI Studio (https://aistudio.google.com).',
+                      error_type: 'InvalidApiKey',
+                    },
+                  }),
+                  { status: 401, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
+                );
+              }
+            }
+
+            if (status === 403) {
+              return new Response(
+                JSON.stringify({
+                  detail: {
+                    message: 'Google Gemini request forbidden or quota suspended for this API key.',
+                    error_type: 'Forbidden',
+                  },
+                }),
+                { status: 403, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
+              );
+            }
+
+            if (status === 404) {
+              return new Response(
+                JSON.stringify({
+                  detail: {
+                    message: `Configured Gemini model '${model}' was not found. Please open Provider Settings to select an active model.`,
+                    error_type: 'ModelUnavailable',
+                  },
+                }),
+                { status: 404, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
+              );
+            }
+
             return new Response(
               JSON.stringify({
                 detail: {
-                  message: `Google Gemini error: ${errMsg}`,
+                  message: `Google Gemini error: ${lastErrMsg || 'Translation request failed.'}`,
                   error_type: 'TranslationExecutionError',
+                  can_switch_provider: true,
                 },
               }),
               { status: 502, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }

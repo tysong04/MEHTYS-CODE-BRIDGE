@@ -216,11 +216,16 @@ async def translate_code(
         )
     except TranslationExecutionError as e:
         logger.error("Translation execution failure: %s", str(e))
+        err_type = getattr(e, "error_type", "TranslationExecutionError")
+        err_msg = getattr(e, "message", str(e))
+        can_switch = getattr(e, "can_switch_provider", False)
+        status_code = status.HTTP_503_SERVICE_UNAVAILABLE if err_type == "ProviderBusy" else status.HTTP_502_BAD_GATEWAY
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
+            status_code=status_code,
             detail={
-                "message": str(e),
-                "error_type": "TranslationExecutionError"
+                "message": err_msg,
+                "error_type": err_type,
+                "can_switch_provider": can_switch,
             }
         )
     except Exception as e:

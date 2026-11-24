@@ -13,13 +13,21 @@ export class TranslationApiError extends Error {
   setup_instructions?: string | null;
   error_type?: string;
   statusCode?: number;
+  can_switch_provider?: boolean;
 
-  constructor(message: string, setup_instructions?: string | null, error_type?: string, statusCode?: number) {
+  constructor(
+    message: string,
+    setup_instructions?: string | null,
+    error_type?: string,
+    statusCode?: number,
+    can_switch_provider?: boolean
+  ) {
     super(message);
     this.name = 'TranslationApiError';
     this.setup_instructions = setup_instructions;
     this.error_type = error_type;
     this.statusCode = statusCode;
+    this.can_switch_provider = can_switch_provider;
   }
 }
 
@@ -119,7 +127,8 @@ export async function translateCode(request: TranslationRequest): Promise<Transl
           errorData.detail.message || 'Translation failed.',
           errorData.detail.setup_instructions,
           errorData.detail.error_type,
-          response.status
+          response.status,
+          errorData.detail.can_switch_provider
         );
       } else if (Array.isArray(errorData.detail)) {
         // FastAPI validation errors

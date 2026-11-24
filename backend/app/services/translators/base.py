@@ -14,7 +14,16 @@ class ProviderUnavailableError(Exception):
 
 class TranslationExecutionError(Exception):
     """Raised when translation fails during model inference."""
-    pass
+    def __init__(
+        self,
+        message: str,
+        error_type: str = "TranslationExecutionError",
+        can_switch_provider: bool = False
+    ):
+        super().__init__(message)
+        self.message = message
+        self.error_type = error_type
+        self.can_switch_provider = can_switch_provider
 
 
 @dataclass

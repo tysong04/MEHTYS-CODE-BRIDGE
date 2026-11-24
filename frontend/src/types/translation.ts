@@ -125,4 +125,5 @@ export interface ApiError {
   message: string;
   setup_instructions?: string | null;
   error_type?: string;
+  can_switch_provider?: boolean;
 }

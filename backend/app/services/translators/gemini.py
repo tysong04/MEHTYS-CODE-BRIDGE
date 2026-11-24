@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import random
 import re
 import time
 from typing import Optional, List, Dict, Any
@@ -283,6 +284,7 @@ class GeminiTranslationProvider(BaseTranslationProvider):
 
         part_text = ""
         start_time = time.perf_counter()
+        MAX_RETRIES = 2  # Up to 3 attempts total (initial + 2 retries)
 
         async with httpx.AsyncClient(timeout=timeout_config) as client:
             for cfg_idx, gen_config in enumerate(gen_configs):
@@ -296,70 +298,106 @@ class GeminiTranslationProvider(BaseTranslationProvider):
                     "generationConfig": gen_config
                 }
 
-                try:
-                    res = await client.post(url, headers=headers, json=payload)
-
-                    # Check for 400 with invalid schema/thinking arguments vs invalid API key
-                    if res.status_code == 400:
-                        err_body = res.text.lower()
-                        if "api_key" in err_body or "key not valid" in err_body:
-                            self._handle_http_error(res)
-                        elif cfg_idx == 0 and any(k in err_body for k in ("thinking", "schema", "generation_config", "unknown field", "invalid_argument")):
-                            logger.warning(
-                                "Gemini model '%s' rejected advanced generationConfig. Retrying with basic configuration.",
-                                clean_model
-                            )
-                            continue
-                        else:
-                            self._handle_http_error(res)
-
-                    # Transient server error retry (HTTP 503)
-                    if res.status_code == 503:
-                        logger.warning("Gemini returned HTTP 503. Retrying once after 1s...")
-                        await asyncio.sleep(1.0)
+                # Retry loop for transient rate limits or high-demand spikes
+                for attempt in range(MAX_RETRIES + 1):
+                    try:
                         res = await client.post(url, headers=headers, json=payload)
 
-                    if res.status_code != 200:
-                        self._handle_http_error(res)
+                        # Check for 400 with invalid schema/thinking arguments vs invalid API key
+                        if res.status_code == 400:
+                            err_body = res.text.lower()
+                            if "api_key" in err_body or "key not valid" in err_body:
+                                self._handle_http_error(res)
+                            elif cfg_idx == 0 and any(k in err_body for k in ("thinking", "schema", "generation_config", "unknown field", "invalid_argument")):
+                                logger.warning(
+                                    "Gemini model '%s' rejected advanced generationConfig. Retrying with basic configuration.",
+                                    clean_model
+                                )
+                                break  # Break retry loop, try next gen_config
+                            else:
+                                self._handle_http_error(res)
 
-                    data = res.json()
-                    candidates = data.get("candidates", [])
-                    if not candidates:
-                        block_reason = data.get("promptFeedback", {}).get("blockReason", "Unknown")
-                        raise TranslationExecutionError(
-                            f"Gemini did not return any translation candidates (Block reason: {block_reason})."
+                        err_body_lower = res.text.lower()
+                        is_transient = (
+                            res.status_code in (429, 500, 502, 503, 504) or
+                            "high demand" in err_body_lower or
+                            "spikes in demand" in err_body_lower or
+                            "resource_exhausted" in err_body_lower or
+                            "overloaded" in err_body_lower or
+                            "temporarily" in err_body_lower
                         )
 
-                    # Filter out internal reasoning parts (thought: True) to retrieve the actual output
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    output_parts = [p.get("text", "") for p in parts if not p.get("thought", False) and p.get("text")]
-                    part_text = "\n".join(output_parts).strip()
-                    if not part_text and parts:
-                        part_text = parts[-1].get("text", "").strip()
+                        # If transient rate limit or service unavailability and retries remain, back off with jitter
+                        if is_transient and attempt < MAX_RETRIES:
+                            retry_after = self._parse_retry_after(res.headers.get("retry-after"))
+                            if retry_after is not None and 0 < retry_after <= 10.0:
+                                delay = retry_after
+                            else:
+                                # Exponential backoff + jitter (attempt 0: ~1.2s, attempt 1: ~2.3s)
+                                delay = min(8.0, 1.0 * (2 ** attempt) + random.uniform(0.1, 0.4))
+                            logger.warning(
+                                "Gemini returned transient status %d (attempt %d/%d). Retrying in %.2fs...",
+                                res.status_code, attempt + 1, MAX_RETRIES + 1, delay
+                            )
+                            await asyncio.sleep(delay)
+                            continue
 
-                    if not part_text:
-                        raise TranslationExecutionError("Gemini returned an empty response.")
+                        if res.status_code != 200:
+                            self._handle_http_error(res)
 
-                    break  # Success!
+                        data = res.json()
+                        candidates = data.get("candidates", [])
+                        if not candidates:
+                            block_reason = data.get("promptFeedback", {}).get("blockReason", "Unknown")
+                            raise TranslationExecutionError(
+                                f"Gemini did not return any translation candidates (Block reason: {block_reason})."
+                            )
 
-                except httpx.ConnectError as e:
-                    raise ProviderUnavailableError(
-                        "Unable to connect to Google Gemini API. Please check your internet connection.",
-                        "Ensure your machine has internet access to reach https://generativelanguage.googleapis.com"
-                    ) from e
-                except httpx.ReadTimeout as e:
-                    raise TranslationExecutionError(
-                        f"Translation timed out after {self.timeout}s while waiting for Google Gemini response."
-                    ) from e
-                except (ProviderUnavailableError, TranslationExecutionError):
-                    raise
-                except Exception as e:
-                    raise TranslationExecutionError(
-                        f"Unexpected error communicating with Google Gemini: {type(e).__name__}"
-                    ) from e
+                        # Filter out internal reasoning parts (thought: True) to retrieve the actual output
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        output_parts = [p.get("text", "") for p in parts if not p.get("thought", False) and p.get("text")]
+                        part_text = "\n".join(output_parts).strip()
+                        if not part_text and parts:
+                            part_text = parts[-1].get("text", "").strip()
+
+                        if not part_text:
+                            raise TranslationExecutionError("Gemini returned an empty response.")
+
+                        break  # Success!
+
+                    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as e:
+                        if attempt < MAX_RETRIES:
+                            delay = 1.0 * (2 ** attempt) + random.uniform(0.1, 0.4)
+                            logger.warning(
+                                "Network issue (%s) on attempt %d/%d. Retrying in %.2fs...",
+                                type(e).__name__, attempt + 1, MAX_RETRIES + 1, delay
+                            )
+                            await asyncio.sleep(delay)
+                            continue
+                        raise ProviderUnavailableError(
+                            "Unable to connect to Google Gemini API. Please check your internet connection.",
+                            "Ensure your machine has internet access to reach https://generativelanguage.googleapis.com"
+                        ) from e
+                    except (ProviderUnavailableError, TranslationExecutionError):
+                        raise
+                    except Exception as e:
+                        if attempt < MAX_RETRIES:
+                            delay = 1.0 * (2 ** attempt) + random.uniform(0.1, 0.4)
+                            await asyncio.sleep(delay)
+                            continue
+                        raise TranslationExecutionError(
+                            f"Unexpected error communicating with Google Gemini: {type(e).__name__}"
+                        ) from e
+
+                if part_text:
+                    break
 
         if not part_text:
-            raise TranslationExecutionError("Gemini translation returned no content.")
+            raise TranslationExecutionError(
+                message="Gemini is temporarily busy. Your code is safe. Please try again shortly or switch providers.",
+                error_type="ProviderBusy",
+                can_switch_provider=True
+            )
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000.0
         logger.info("Gemini translation completed for model '%s' in %.2fms", clean_model, elapsed_ms)
@@ -376,16 +414,83 @@ class GeminiTranslationProvider(BaseTranslationProvider):
             execution_time_ms=round(elapsed_ms, 2)
         )
 
+    @staticmethod
+    def _sanitize_error(msg: Any) -> str:
+        """Strip raw API keys and credentials from error text."""
+        if not msg:
+            return ""
+        if not isinstance(msg, str):
+            msg = str(msg)
+        cleaned = re.sub(r"AIza[0-9A-Za-z\-_]{35}", "[REDACTED_API_KEY]", msg)
+        cleaned = re.sub(r"key=[a-zA-Z0-9_\-]+", "key=[REDACTED]", cleaned, flags=re.IGNORECASE)
+        return cleaned.strip()
+
+    @staticmethod
+    def _parse_retry_after(header: Optional[str]) -> Optional[float]:
+        """Parse Retry-After header as integer or float seconds."""
+        if not header:
+            return None
+        try:
+            return float(header.strip())
+        except ValueError:
+            return None
+
     def _handle_http_error(self, res: httpx.Response) -> None:
         err_msg = ""
+        # Check if res.text contains valid JSON before or instead of calling res.json()
+        raw_text = str(res.text) if hasattr(res, "text") and res.text else ""
         try:
             err_json = res.json()
-            err_msg = err_json.get("error", {}).get("message", "")
+            if isinstance(err_json, dict):
+                error_obj = err_json.get("error")
+                if isinstance(error_obj, dict):
+                    err_msg = str(error_obj.get("message", "") or "")
+                elif isinstance(error_obj, str):
+                    err_msg = error_obj
+                else:
+                    err_msg = str(err_json.get("message", "") or "")
+            elif isinstance(err_json, str):
+                err_msg = err_json
+            else:
+                err_msg = raw_text[:200]
         except Exception:
-            err_msg = res.text[:200] if res.text else ""
+            err_msg = raw_text[:200]
+
+        if not err_msg and raw_text:
+            try:
+                parsed = json.loads(raw_text)
+                if isinstance(parsed, dict):
+                    error_obj = parsed.get("error")
+                    if isinstance(error_obj, dict):
+                        err_msg = str(error_obj.get("message", "") or "")
+                    elif isinstance(error_obj, str):
+                        err_msg = error_obj
+                    else:
+                        err_msg = str(parsed.get("message", "") or "")
+            except Exception:
+                err_msg = raw_text[:200]
+
+        err_msg = self._sanitize_error(err_msg)
+        err_lower = (err_msg + " " + raw_text).lower()
+
+        is_busy = (
+            res.status_code in (429, 500, 502, 503, 504) or
+            "high demand" in err_lower or
+            "spikes in demand" in err_lower or
+            "resource_exhausted" in err_lower or
+            "overloaded" in err_lower or
+            "temporarily" in err_lower
+        )
+
+        if is_busy:
+            raise TranslationExecutionError(
+                message="Gemini is temporarily busy. Your code is safe. Please try again shortly or switch providers.",
+                error_type="ProviderBusy",
+                can_switch_provider=True
+            )
 
         if res.status_code == 400:
-            if "api_key" in err_msg.lower() or "key not valid" in err_msg.lower():
+            if "api_key" in err_lower or "key not valid" in err_lower:
                 raise ProviderUnavailableError(
                     "Google Gemini rejected the request: Invalid API key.",
                     "Verify your API key from Google AI Studio (https://aistudio.google.com)."
@@ -409,14 +514,6 @@ class GeminiTranslationProvider(BaseTranslationProvider):
             raise TranslationExecutionError(
                 f"Configured Gemini model '{self.model}' was not found or is unavailable for your API key. "
                 f"Please open Provider Settings to select an active model{suggestions} or click 'Test Connection' to refresh your available models."
-            )
-        elif res.status_code == 429:
-            raise TranslationExecutionError(
-                "Google Gemini API rate limit or quota exceeded. Please wait a moment before trying again."
-            )
-        elif res.status_code >= 500:
-            raise TranslationExecutionError(
-                f"Google Gemini service is temporarily unavailable (HTTP {res.status_code})."
             )
         else:
             raise TranslationExecutionError(
